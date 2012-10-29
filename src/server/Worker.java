@@ -12,48 +12,95 @@ import java.net.Socket;
  */
 public class Worker implements Runnable {
 
-	/**
-	 * 
-	 */
-	private Socket socket;
+	Socket socket;
 
 	/**
 	 * @param socket
 	 */
 	public Worker(Socket socket) {
 		this.socket = socket;
-
 	}
 
-	/*
-	 * (non-Javadoc)
-	 * 
-	 * @see java.lang.Runnable#run()
-	 */
 	@Override
 	public void run() {
 
 		// TODO: cleanup
 
-		try {
-			InputStreamReader inStream = new InputStreamReader(
-					socket.getInputStream());
-			DataOutputStream outStream = new DataOutputStream(
-					socket.getOutputStream());
-			BufferedReader in = new BufferedReader(inStream);
-			String request = in.readLine();
+		long lastRequest = System.currentTimeMillis();
+		boolean keepAlive = false;
 
-			if (request != null) {
-				RequestHandlers.handleGET(request.split(" ")[1], outStream);
+		while (true) {
+			try {
+
+				if (socket.isClosed() || socket.isInputShutdown()) {
+					break;
+				}
+
+				if (lastRequest + Config.KEEP_ALIVE < System
+						.currentTimeMillis()) {
+					socket.close();
+					break;
+				}
+
+				InputStreamReader inStream = new InputStreamReader(
+						socket.getInputStream());
+				DataOutputStream outStream = new DataOutputStream(
+						socket.getOutputStream());
+				BufferedReader in = new BufferedReader(inStream);
+				String request = in.readLine();
+
+				if (request != null) {
+					String[] tokens = request.split(" ");
+					String method = tokens[0];
+					String path = tokens[1];
+					String protocol = tokens[2];
+					String connection = null;
+
+					String aux = null;
+					do {
+						aux = in.readLine();
+						if (aux.contains("Connection")) {
+							connection = aux;
+						}
+					} while (aux != null && !aux.equals(""));
+
+					// check if we should keep the connection alive
+					if (protocol.equals("HTTP/1.1")) {
+						if (connection == null
+								|| connection.equals("Connection: keep-alive")) {
+							keepAlive = true;
+						}
+					} else if (protocol.equals("HTTP/1.0")) {
+						if (connection != null
+								&& connection.equals("Connection: keep-alive")) {
+							keepAlive = true;
+						}
+					}
+
+					if (method.equals("GET")) {
+						RequestHandlers.handleGET(path, outStream, protocol,
+								keepAlive);
+					}
+
+					if (!keepAlive) {
+						break;
+					}
+
+					lastRequest = System.currentTimeMillis();
+				}
+			} catch (IOException e) {
+				e.printStackTrace();
+				if (!socket.isClosed()) {
+					try {
+						socket.close();
+					} catch (IOException e1) {
+						e1.printStackTrace();
+					}
+					break;
+				}
+				break;
 			}
-
-			socket.close();
-
-		} catch (IOException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
 		}
-
 	}
 
 }
